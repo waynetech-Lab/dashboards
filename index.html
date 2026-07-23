@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tablero Turístico 2026: Conexión Automatizada a Fuentes Oficiales</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="bg-gray-100 text-gray-800 font-sans p-6">
+
+    <div class="max-w-7xl mx-auto">
+        <header class="mb-8 flex flex-col md:flex-row md:justify-between md:items-end gap-4">
+            <div>
+                <h1 class="text-3xl font-bold text-blue-900">Tablero de Afluencia y Ocupación Hotelera</h1>
+                <p class="text-gray-600 mt-2" id="last-update">Esperando actualización...</p>
+            </div>
+            <!-- Este botón forzará la lectura del archivo JSON actualizado por Python -->
+            <button id="btn-update" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg shadow transition-colors flex items-center">
+                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                Actualizar Datos del Servidor
+            </button>
+        </header>
+
+        <!-- KPIs -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+            <div class="bg-white p-6 rounded-lg shadow border-l-4 border-blue-500">
+                <h3 class="text-gray-500 text-sm font-semibold uppercase tracking-wider">Afluencia Total (Mes Actual)</h3>
+                <p id="kpi-influx" class="text-3xl font-bold text-gray-800 mt-2">0</p>
+            </div>
+            <div class="bg-white p-6 rounded-lg shadow border-l-4 border-green-500">
+                <h3 class="text-gray-500 text-sm font-semibold uppercase tracking-wider">Ocupación Promedio (Mes Actual)</h3>
+                <p id="kpi-occupancy" class="text-3xl font-bold text-gray-800 mt-2">0%</p>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+            <div class="bg-white p-6 rounded-lg shadow"><canvas id="influxChart"></canvas></div>
+            <div class="bg-white p-6 rounded-lg shadow"><canvas id="occupancyChart"></canvas></div>
+        </div>
+
+        <div class="bg-white rounded-lg shadow overflow-hidden">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Destino</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Afluencia</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Ocupación</th>
+                    </tr>
+                </thead>
+                <tbody id="data-table-body" class="bg-white divide-y divide-gray-200"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        // Apunta directamente al archivo generado por tu script de Python
+        const API_JSON_LOCAL = 'datos_turismo.json'; 
+        
+        let chartInflux, chartOccupancy;
+        const numFormat = new Intl.NumberFormat('es-MX');
+
+        async function cargarDatosDirectos() {
+            try {
+                // Prevenir caché para que siempre lea la última versión del JSON
+                const response = await fetch(API_JSON_LOCAL + '?cache=' + new Date().getTime());
+                
+                if (!response.ok) {
+                    throw new Error("No se encontró el archivo JSON. Asegúrate de ejecutar el script de Python primero.");
+                }
+                
+                const db = await response.json();
+                
+                document.getElementById('last-update').textContent = `Sincronizado directo de la fuente oficial: ${db.ultima_actualizacion}`;
+                
+                // Usaremos los datos del mes más reciente que extrajo Python (Junio)
+                const datosActuales = db.Junio; 
+                renderizarTablero(datosActuales);
+
+            } catch (error) {
+                console.error(error);
+                alert(error.message);
+                document.getElementById('last-update').textContent = "Error de conexión con el motor de datos.";
+            }
+        }
+
+        function renderizarTablero(datos) {
+            const totalInflux = datos.reduce((sum, item) => sum + item.influx, 0);
+            const avgOccupancy = datos.length > 0 ? (datos.reduce((sum, item) => sum + item.occupancy, 0) / datos.length) : 0;
+
+            document.getElementById('kpi-influx').textContent = numFormat.format(totalInflux);
+            document.getElementById('kpi-occupancy').textContent = avgOccupancy.toFixed(1) + '%';
+
+            const tbody = document.getElementById('data-table-body');
+            tbody.innerHTML = '';
+            
+            const labels = [];
+            const influxData = [];
+            const occupancyData = [];
+
+            datos.forEach(item => {
+                labels.push(item.name);
+                influxData.push(item.influx);
+                occupancyData.push(item.occupancy);
+
+                tbody.innerHTML += `
+                    <tr>
+                        <td class="px-6 py-4 font-medium">${item.name}</td>
+                        <td class="px-6 py-4">${numFormat.format(item.influx)}</td>
+                        <td class="px-6 py-4">
+                            <div class="flex items-center">
+                                <span class="mr-2 w-10 text-right">${item.occupancy.toFixed(1)}%</span>
+                                <div class="w-24 bg-gray-200 rounded-full h-2.5"><div class="bg-blue-600 h-2.5 rounded-full" style="width: ${item.occupancy}%"></div></div>
+                            </div>
+                        </td>
+                    </tr>`;
+            });
+
+            if (chartInflux) chartInflux.destroy();
+            if (chartOccupancy) chartOccupancy.destroy();
+
+            const ctx1 = document.getElementById('influxChart').getContext('2d');
+            const ctx2 = document.getElementById('occupancyChart').getContext('2d');
+
+            chartInflux = new Chart(ctx1, { type: 'bar', data: { labels: labels, datasets: [{ label: 'Visitantes', data: influxData, backgroundColor: '#3b82f6' }] }});
+            chartOccupancy = new Chart(ctx2, { type: 'bar', data: { labels: labels, datasets: [{ label: 'Ocupación (%)', data: occupancyData, backgroundColor: '#10b981' }] }, options: { scales: { y: { max: 100 } } }});
+        }
+
+        // El botón fuerza la lectura del JSON más reciente generado por Python
+        document.getElementById('btn-update').addEventListener('click', async () => {
+            const btn = document.getElementById('btn-update');
+            const ogText = btn.innerHTML;
+            btn.innerHTML = 'Leyendo motor de datos...';
+            btn.disabled = true;
+            
+            await cargarDatosDirectos();
+            
+            btn.innerHTML = ogText;
+            btn.disabled = false;
+        });
+
+        // Cargar al inicio
+        cargarDatosDirectos();
+    </script>
+</body>
+</html>
